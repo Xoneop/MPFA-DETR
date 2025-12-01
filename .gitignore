@@ -7,9 +7,12 @@ runs/
 # Virtual environment
 venv/
 env/
+<<<<<<< HEAD
 train/
 test/
 val/
+=======
+>>>>>>> b864452dad884a945f8040f78c42c570132b28f9
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
