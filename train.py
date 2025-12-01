@@ -20,7 +20,7 @@ if __name__ == '__main__':
     yaml_path = '/home/shuoxing/XQK/UAV-DETR-main/dataset/dataset_visdrone/data.yaml'
     check_path(yaml_path)
     # model = RTDETR('ultralytics/cfg/models/uavdetr-r50.yaml')
-    model = RTDETR('/home/shuoxing/XQK/UAV-DETR-main/ultralytics/cfg/models/uavdetr-r50.yaml')
+    model = RTDETR('/home/shuoxing/XQK/UAV-DETR-main/ultralytics/cfg/models/uavdetr-r18.yaml')
     model.train(data=str(yaml_path),
                 cache=False,
                 imgsz=640,

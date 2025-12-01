@@ -7,6 +7,9 @@ runs/
 # Virtual environment
 venv/
 env/
+train/
+test/
+val/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
