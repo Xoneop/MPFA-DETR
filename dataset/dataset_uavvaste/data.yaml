@@ -1,0 +1,12 @@
+# UAVVaste YOLO dataset configuration
+
+# Dataset root directory
+path: /home/shuoxing/XQK/UAV-DETR-main/dataset/dataset_uavvaste # dataset root dir
+train: ./train # train images (relative to 'path') 6471 images
+val: ./val # val images (relative to 'path') 548 images
+test: ./test # test-dev images (optional) 1610 images
+
+
+# Class names
+names:
+  0: litter

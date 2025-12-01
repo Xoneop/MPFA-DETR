@@ -28,7 +28,7 @@ if __name__ == '__main__':
                 batch=4,
                 workers=8,
                 device='0',
-                #resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp/weights/last.pt', # last.pt path
+                resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp2/weights/last.pt', # last.pt path
                 project='runs/train',
                 name='exp',
                 patience = 20, # early stopping patience
