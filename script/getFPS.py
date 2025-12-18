@@ -38,9 +38,9 @@ def get_weight_size(path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='xxx/best.pt', help='trained weights path')
+    parser.add_argument('--weights', type=str, default='/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp/weights/best.pt', help='trained weights path')
     parser.add_argument('--batch', type=int, default=4, help='total batch size for all GPUs')
-    parser.add_argument('--imgs', nargs='+', type=int, default=[1024, 1024], help='[height, width] image sizes')
+    parser.add_argument('--imgs', nargs='+', type=int, default=[640, 640], help='[height, width] image sizes')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--warmup', default=200, type=int, help='warmup time')
     parser.add_argument('--testtime', default=1000, type=int, help='test time')

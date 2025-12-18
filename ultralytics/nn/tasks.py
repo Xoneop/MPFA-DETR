@@ -840,7 +840,7 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
         else:
             c2 = ch[f]
 
-       
+       #根据函数构造模型
         if isinstance(c2, list) :
             is_backbone = True
             m_ = m
@@ -863,7 +863,7 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
             for _ in range(5 - len(ch)):
                 ch.insert(0, 0)
         else:
-            ch.append(c2)
+            ch.append(c2) #记录每层的输出通道
     return nn.Sequential(*layers), sorted(save)
 
 

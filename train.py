@@ -26,10 +26,11 @@ if __name__ == '__main__':
                 imgsz=640,
                 epochs=400,
                 batch=4,
-                workers=8,
+                workers=16,
                 device='0',
-                resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp2/weights/last.pt', # last.pt path
+                resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/last.pt', # last.pt path
+                #pretrained='/home/shuoxing/XQK/UAV-DETR-main/runs/train/uavvaste_train_continte/weights/best.pt',
                 project='runs/train',
-                name='exp',
-                patience = 20, # early stopping patience
+                name='visdrone_train_SMFF_improve_r18',
+                patience = 20 # early stopping patience
                 )
