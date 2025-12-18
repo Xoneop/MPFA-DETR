@@ -20,7 +20,7 @@ if __name__ == '__main__':
     yaml_path = '/home/shuoxing/XQK/UAV-DETR-main/dataset/dataset_visdrone/data.yaml'
     check_path(yaml_path)
     # model = RTDETR('ultralytics/cfg/models/uavdetr-r50.yaml')
-    model = RTDETR('/home/shuoxing/XQK/UAV-DETR-main/ultralytics/cfg/models/uavdetr-r18.yaml')
+    model = RTDETR('/home/shuoxing/XQK/UAV-DETR-main/ultralytics/cfg/models/uavdetr-r50.yaml')
     model.train(data=str(yaml_path),
                 cache=False,
                 imgsz=640,
@@ -28,8 +28,9 @@ if __name__ == '__main__':
                 batch=4,
                 workers=8,
                 device='0',
-                resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp2/weights/last.pt', # last.pt path
+                #resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/uavvaste_train/weights/last.pt', # last.pt path
+                #pretrained='/home/shuoxing/XQK/UAV-DETR-main/runs/train/uavvaste_train_continte/weights/best.pt',
                 project='runs/train',
-                name='exp',
-                patience = 20, # early stopping patience
+                name='uavvaste_train_Dysample',
+                patience = 20 # early stopping patience
                 )

@@ -95,6 +95,7 @@
 import os
 
 ROOT = "/home/shuoxing/XQK/UAV-DETR-main/dataset/dataset_uavvaste/uavvaste"
+#ROOT = "/home/shuoxing/XQK/UAV-DETR-main/dataset/dataset_visdrone"
 
 splits = ["train", "val", "test"]
 

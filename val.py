@@ -6,12 +6,12 @@ from ultralytics import RTDETR
 # 最终论文的参数量和计算量统一以这个脚本运行出来的为准
 
 if __name__ == '__main__':
-    model = RTDETR('./runs/train/exp13/weights/best.pt')
+    model = RTDETR('/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp/weights/best.pt')
     model.val(data='./dataset/dataset_visdrone/data.yaml',
               split='val', # split可以选择train、val、test 根据自己的数据集情况来选择.
               imgsz=640,
               batch=4,
               save_json=True, # if you need to cal coco metrice
               project='runs/val',
-              name='exp',
+              name='uavvaste_train_Dysample',
               )

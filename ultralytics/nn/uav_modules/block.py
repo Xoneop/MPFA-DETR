@@ -12,31 +12,38 @@ from ..modules.block import get_activation, ConvNormLayer, WTConvNormLayer,Basic
 
 __all__ = ['DySample','SPDConv','MFFF','FrequencyFocusedDownSampling','SemanticAlignmenCalibration']
 
-
 class DySample(nn.Module):
-    def __init__(self, in_channels, scale=2, style='lp', groups=4, dyscope=False):
-        super().__init__()
+    def __init__(self, in_channels, scale=2, groups=4):
+        super(DySample, self).__init__()
+        # 新增：强制将 groups 转为整数（核心修复）
+        if isinstance(groups, str):
+            try:
+                groups = int(groups)  # 字符串转整数（如 "8" → 8）
+            except ValueError:
+                raise ValueError(f"groups 必须是整数或可转为整数的字符串，当前值：{groups}")
+        assert in_channels % groups == 0, "in_channels 必须能被 groups 整除"
         self.scale = scale
-        self.style = style
         self.groups = groups
-        assert style in ['lp', 'pl']
-        if style == 'pl':
-            assert in_channels >= scale ** 2 and in_channels % scale ** 2 == 0
-        assert in_channels >= groups and in_channels % groups == 0
+        self.in_channels = in_channels
+        self.cg = in_channels // groups
 
-        if style == 'pl':
-            in_channels = in_channels // scale ** 2
-            out_channels = 2 * groups
-        else:
-            out_channels = 2 * groups * scale ** 2
-
-        self.offset = nn.Conv2d(in_channels, out_channels, 1)
+        # 预测 offset：每个 group 预测 2*(scale^2) 个通道（用于 pixel_shuffle -> (dx,dy)）
+        self.offset = nn.Conv2d(in_channels, 2 * groups * scale ** 2, 1)
         self.normal_init(self.offset, std=0.001)
-        if dyscope:
-            self.scope = nn.Conv2d(in_channels, out_channels, 1)
-            self.constant_init(self.scope, val=0.)
 
-        self.register_buffer('init_pos', self._init_pos())
+        # 自注意力机制
+        self.attention = SelfAttention(in_channels)
+
+        # 融合权重系数
+        self.alpha = nn.Parameter(torch.tensor(0.5))
+
+        # Sobel 核注册为 buffer（会跟随 device）
+        sobel_x = torch.tensor([[-1, 0, 1],
+                                [-2, 0, 2],
+                                [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        sobel_y = sobel_x.transpose(2, 3)
+        self.register_buffer("sobel_x", sobel_x)
+        self.register_buffer("sobel_y", sobel_y)
 
     def normal_init(self, module, mean=0, std=1, bias=0):
         if hasattr(module, 'weight') and module.weight is not None:
@@ -44,49 +51,197 @@ class DySample(nn.Module):
         if hasattr(module, 'bias') and module.bias is not None:
             nn.init.constant_(module.bias, bias)
 
-    def constant_init(self, module, val, bias=0):
-        if hasattr(module, 'weight') and module.weight is not None:
-            nn.init.constant_(module.weight, val)
-        if hasattr(module, 'bias') and module.bias is not None:
-            nn.init.constant_(module.bias, bias)
-    
-    def _init_pos(self):
-        h = torch.arange((-self.scale + 1) / 2, (self.scale - 1) / 2 + 1) / self.scale
-        return torch.stack(torch.meshgrid([h, h])).transpose(1, 2).repeat(1, self.groups, 1).reshape(1, -1, 1, 1)
+    def compute_confidence(self, x):
+        """
+        多通道 Sobel：depthwise conv -> (B,C,H,W)，再聚合成 (B,1,H,W)
+        """
+        B, C, H, W = x.shape
+        wx = self.sobel_x.to(dtype=x.dtype, device=x.device).repeat(C, 1, 1, 1)  # (C,1,3,3)
+        wy = self.sobel_y.to(dtype=x.dtype, device=x.device).repeat(C, 1, 1, 1)
 
-    def sample(self, x, offset):
-        B, _, H, W = offset.shape
-        offset = offset.view(B, 2, -1, H, W)
-        coords_h = torch.arange(H) + 0.5
-        coords_w = torch.arange(W) + 0.5
-        coords = torch.stack(torch.meshgrid([coords_w, coords_h])
-                             ).transpose(1, 2).unsqueeze(1).unsqueeze(0).type(x.dtype).to(x.device)
-        normalizer = torch.tensor([W, H], dtype=x.dtype, device=x.device).view(1, 2, 1, 1, 1)
-        coords = 2 * (coords + offset) / normalizer - 1
-        coords = F.pixel_shuffle(coords.view(B, -1, H, W), self.scale).view(
-            B, 2, -1, self.scale * H, self.scale * W).permute(0, 2, 3, 4, 1).contiguous().flatten(0, 1)
-        return F.grid_sample(x.reshape(B * self.groups, -1, H, W), coords, mode='bilinear',
-                             align_corners=False, padding_mode="border").view(B, -1, self.scale * H, self.scale * W)
+        grad_x = F.conv2d(x, wx, padding=1, groups=C)
+        grad_y = F.conv2d(x, wy, padding=1, groups=C)
+        mag = torch.sqrt(grad_x * grad_x + grad_y * grad_y + 1e-12)  # (B,C,H,W)
 
-    def forward_lp(self, x):
-        if hasattr(self, 'scope'):
-            offset = self.offset(x) * self.scope(x).sigmoid() * 0.5 + self.init_pos
-        else:
-            offset = self.offset(x) * 0.25 + self.init_pos
-        return self.sample(x, offset)
+        conf = mag.mean(dim=1, keepdim=True)  # (B,1,H,W)
 
-    def forward_pl(self, x):
-        x_ = F.pixel_shuffle(x, self.scale)
-        if hasattr(self, 'scope'):
-            offset = F.pixel_unshuffle(self.offset(x_) * self.scope(x_).sigmoid(), self.scale) * 0.5 + self.init_pos
-        else:
-            offset = F.pixel_unshuffle(self.offset(x_), self.scale) * 0.25 + self.init_pos
-        return self.sample(x, offset)
+        # 简单归一化到 0~1（每个样本独立）
+        mn = conf.amin(dim=(2, 3), keepdim=True)
+        mx = conf.amax(dim=(2, 3), keepdim=True)
+        conf = (conf - mn) / (mx - mn + 1e-6)
+        return conf
+
+    def compute_attention(self, x):
+        """
+        注意力输出仍是 (B,C,H,W)，后面会压成 (B,1,H,W) 用作权重图
+        """
+        return self.attention(x)
+
+    def sample(self, x, offset, confidence_map, attention_map):
+        """
+        正确的 deform 上采样采样流程：
+        - offset: (B, 2*groups*s^2, H, W)
+        - pixel_shuffle -> (B*groups, 2, H*s, W*s)
+        - 构造 base_grid: (B*groups, H*s, W*s, 2)
+        - grid_sample 输入: (B*groups, Cg, H, W)
+        - 输出 reshape 回 (B, C, H*s, W*s)
+        """
+        B, C, H, W = x.shape
+        s = self.scale
+        G = self.groups
+        Cg = self.cg
+
+        # attention_map (B,C,H,W) -> (B,1,H,W)
+        att_w = attention_map.mean(dim=1, keepdim=True)
+
+        # 融合权重图 (B,1,H,W)，再上采样到 HR
+        w = torch.sigmoid(self.alpha * confidence_map + (1 - self.alpha) * att_w)  # (B,1,H,W)
+        w_hr = F.interpolate(w, scale_factor=s, mode="bilinear", align_corners=False)  # (B,1,H*s,W*s)
+
+        # offset reshape -> (B,G,2*s^2,H,W) -> (B*G,2*s^2,H,W) -> pixel_shuffle -> (B*G,2,H*s,W*s)
+        off = offset.view(B, G, 2 * s * s, H, W).reshape(B * G, 2 * s * s, H, W)
+        off_hr = F.pixel_shuffle(off, s)  # (B*G,2,H*s,W*s)
+
+        # base grid：HR 像素中心映射回 LR
+        ys = torch.arange(H * s, device=x.device, dtype=x.dtype)
+        xs = torch.arange(W * s, device=x.device, dtype=x.dtype)
+        yy, xx = torch.meshgrid(ys, xs, indexing="ij")  # (H*s, W*s)
+
+        # HR -> LR（像素坐标）
+        yy = (yy + 0.5) / s - 0.5
+        xx = (xx + 0.5) / s - 0.5
+
+        # LR 像素坐标 -> normalized [-1,1] (align_corners=False)
+        x_norm = (xx + 0.5) / W * 2 - 1
+        y_norm = (yy + 0.5) / H * 2 - 1
+        base_grid = torch.stack([x_norm, y_norm], dim=-1)  # (H*s, W*s, 2)
+        base_grid = base_grid.unsqueeze(0).repeat(B * G, 1, 1, 1)  # (B*G,H*s,W*s,2)
+
+        # 把 w_hr 扩展到 (B*G,1,H*s,W*s)，调制 offset 强度
+        w_hr_rep = w_hr.repeat_interleave(G, dim=0)  # (B*G,1,H*s,W*s)
+
+        dx = off_hr[:, 0:1] * w_hr_rep
+        dy = off_hr[:, 1:2] * w_hr_rep
+
+        # 像素偏移 -> normalized 偏移
+        dx_norm = dx.permute(0, 2, 3, 1) * (2.0 / W)
+        dy_norm = dy.permute(0, 2, 3, 1) * (2.0 / H)
+
+        grid = base_grid.clone()
+        grid[..., 0:1] = grid[..., 0:1] + dx_norm
+        grid[..., 1:2] = grid[..., 1:2] + dy_norm
+
+        # 分组输入：x -> (B*G, Cg, H, W)
+        xg = x.view(B, G, Cg, H, W).reshape(B * G, Cg, H, W)
+
+        yg = F.grid_sample(xg, grid, mode="bilinear", align_corners=False, padding_mode="border")
+        y = yg.view(B, G, Cg, H * s, W * s).reshape(B, C, H * s, W * s)
+        return y
 
     def forward(self, x):
-        if self.style == 'pl':
-            return self.forward_pl(x)
-        return self.forward_lp(x)
+        confidence_map = self.compute_confidence(x)
+        attention_map = self.compute_attention(x)
+        offset = self.offset(x)
+        return self.sample(x, offset, confidence_map, attention_map)
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, in_channels):
+        super(SelfAttention, self).__init__()
+        mid = max(1, in_channels // 8)  # 防止为 0
+        self.query_conv = nn.Conv2d(in_channels, mid, 1)
+        self.key_conv = nn.Conv2d(in_channels, mid, 1)
+        self.value_conv = nn.Conv2d(in_channels, in_channels, 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        B, C, H, W = x.size()
+        HW = H * W
+        query = self.query_conv(x).view(B, -1, HW).permute(0, 2, 1)  # (B,HW,mid)
+        key = self.key_conv(x).view(B, -1, HW)                      # (B,mid,HW)
+        value = self.value_conv(x).view(B, -1, HW)                  # (B,C,HW)
+
+        attention = torch.bmm(query, key)                           # (B,HW,HW)
+        attention = F.softmax(attention, dim=-1)
+
+        out = torch.bmm(value, attention.permute(0, 2, 1))          # (B,C,HW)
+        out = out.view(B, C, H, W)
+        return self.gamma * out + x
+
+# class DySample(nn.Module):
+#     def __init__(self, in_channels, scale=2, style='lp', groups=4, dyscope=False):
+#         super().__init__()
+#         self.scale = scale
+#         self.style = style
+#         self.groups = groups
+#         assert style in ['lp', 'pl']
+#         if style == 'pl':
+#             assert in_channels >= scale ** 2 and in_channels % scale ** 2 == 0
+#         assert in_channels >= groups and in_channels % groups == 0
+#
+#         if style == 'pl':
+#             in_channels = in_channels // scale ** 2
+#             out_channels = 2 * groups
+#         else:
+#             out_channels = 2 * groups * scale ** 2
+#
+#         self.offset = nn.Conv2d(in_channels, out_channels, 1)
+#         self.normal_init(self.offset, std=0.001)
+#         if dyscope:
+#             self.scope = nn.Conv2d(in_channels, out_channels, 1)
+#             self.constant_init(self.scope, val=0.)
+#
+#         self.register_buffer('init_pos', self._init_pos())
+#
+#     def normal_init(self, module, mean=0, std=1, bias=0):
+#         if hasattr(module, 'weight') and module.weight is not None:
+#             nn.init.normal_(module.weight, mean, std)
+#         if hasattr(module, 'bias') and module.bias is not None:
+#             nn.init.constant_(module.bias, bias)
+#
+#     def constant_init(self, module, val, bias=0):
+#         if hasattr(module, 'weight') and module.weight is not None:
+#             nn.init.constant_(module.weight, val)
+#         if hasattr(module, 'bias') and module.bias is not None:
+#             nn.init.constant_(module.bias, bias)
+#
+#     def _init_pos(self):
+#         h = torch.arange((-self.scale + 1) / 2, (self.scale - 1) / 2 + 1) / self.scale
+#         return torch.stack(torch.meshgrid([h, h])).transpose(1, 2).repeat(1, self.groups, 1).reshape(1, -1, 1, 1)
+#
+#     def sample(self, x, offset):
+#         B, _, H, W = offset.shape
+#         offset = offset.view(B, 2, -1, H, W)
+#         coords_h = torch.arange(H) + 0.5
+#         coords_w = torch.arange(W) + 0.5
+#         coords = torch.stack(torch.meshgrid([coords_w, coords_h])
+#                              ).transpose(1, 2).unsqueeze(1).unsqueeze(0).type(x.dtype).to(x.device)
+#         normalizer = torch.tensor([W, H], dtype=x.dtype, device=x.device).view(1, 2, 1, 1, 1)
+#         coords = 2 * (coords + offset) / normalizer - 1
+#         coords = F.pixel_shuffle(coords.view(B, -1, H, W), self.scale).view(
+#             B, 2, -1, self.scale * H, self.scale * W).permute(0, 2, 3, 4, 1).contiguous().flatten(0, 1)
+#         return F.grid_sample(x.reshape(B * self.groups, -1, H, W), coords, mode='bilinear',
+#                              align_corners=False, padding_mode="border").view(B, -1, self.scale * H, self.scale * W)
+#
+#     def forward_lp(self, x):
+#         if hasattr(self, 'scope'):
+#             offset = self.offset(x) * self.scope(x).sigmoid() * 0.5 + self.init_pos
+#         else:
+#             offset = self.offset(x) * 0.25 + self.init_pos
+#         return self.sample(x, offset)
+#
+#     def forward_pl(self, x):
+#         x_ = F.pixel_shuffle(x, self.scale)
+#         if hasattr(self, 'scope'):
+#             offset = F.pixel_unshuffle(self.offset(x_) * self.scope(x_).sigmoid(), self.scale) * 0.5 + self.init_pos
+#         else:
+#             offset = F.pixel_unshuffle(self.offset(x_), self.scale) * 0.25 + self.init_pos
+#         return self.sample(x, offset)
+#
+#     def forward(self, x):
+#         if self.style == 'pl':
+#             return self.forward_pl(x)
+#         return self.forward_lp(x)
 
 class SPDConv(nn.Module):
     # Changing the dimension of the Tensor
@@ -169,10 +324,10 @@ class ImprovedFFTKernel(nn.Module):
         out = self.in_conv(x)
         #公式1开始
         # 池化后1*1卷积 
-        x_att = self.fac_conv(self.fac_pool(out))
-        x_fft = torch.fft.fft2(out, norm='backward')
-        x_fft = x_att * x_fft
-        x_fca = torch.fft.ifft2(x_fft, dim=(-2, -1), norm='backward')
+        x_att = self.fac_conv(self.fac_pool(out)) # 平均池化加卷积
+        x_fft = torch.fft.fft2(out, norm='backward') #FF
+        x_fft = x_att * x_fft # 元素级相乘
+        x_fca = torch.fft.ifft2(x_fft, dim=(-2, -1), norm='backward')  # FF
         x_fca = torch.abs(x_fca)
         #公式1结束
         
@@ -239,15 +394,15 @@ class FrequencyFocusedDownSampling(nn.Module):  # Downsample x2分支 with paral
         self.conv_resize = Conv(self.c, self.c, 3, 2, 1)
 #经过池化后分成两个分支，一个分支经过 cv1 处理，另一个分支经过 fgm + maxpool cv2 处理，然后将两个分支拼接在一起，最后使用 1x1 卷积将通道数减少到预期的值。公式写一个表达一下，x1,x2用文字描述一下是什么，cv1,cv2也是呀
     def forward(self, x):
-        x = torch.nn.functional.avg_pool2d(x, 2, 1, 0, False, True)
+        x = torch.nn.functional.avg_pool2d(x, 2, 1, 0, False, True) # torch.Size([2, 256, 79, 79])
         x1, x2 = x.chunk(2, 1)
         x1 = self.cv1(x1)
 
         # 并联处理 x2 分支
-        fgm_out = self.ffm(x2)  # FGM 处理的输出
-        fgm_out = self.conv_resize(fgm_out)  # 调整 fgm_out 的空间尺寸
+        fgm_out = self.ffm(x2)  # FGM 处理的输出  torch.Size([2, 128, 79, 79])
+        fgm_out = self.conv_resize(fgm_out)  # 调整 fgm_out 的空间尺寸  torch.Size([2, 128, 40, 40])
         pooled_out = torch.nn.functional.max_pool2d(x2, 3, 2, 1)
-        pooled_out = self.cv2(pooled_out)
+        pooled_out = self.cv2(pooled_out) # torch.Size([2, 128, 40, 40])
 
         # 将 FGM 输出和 MaxPool2d + Conv 输出拼接
         x2 = torch.cat((fgm_out, pooled_out), 1)
@@ -277,7 +432,7 @@ class SemanticAlignmenCalibration(nn.Module):  #
             Conv(hidden_channels * 2, 64),  # 处理拼接后的特征
             nn.Conv2d(64, self.groups * 4 + 2, kernel_size=3, padding=1, bias=False)  # 生成偏移量
         )
-
+# 这样初始化权重可以有效地提高模型训练的稳定性，防止梯度爆炸或消失的问题，特别是当网络较深时。
         self.init_weights()
         self.offset_conv[1].weight.data.zero_()  # 初始化最后一层卷积的权重为零
 
@@ -291,9 +446,9 @@ class SemanticAlignmenCalibration(nn.Module):  #
 
     def forward(self, x):
         coarse_features, semantic_features = x
-        batch_size, _, out_h, out_w = coarse_features.size()
+        batch_size, _, out_h, out_w = coarse_features.size() #[2,256,80,80]
 
-        # 处理低分辨率的语义特征 (1/8 下采样)
+        # 处理低分辨率的语义特征 (1/8 下采样)[2,256,20,20]
         semantic_features = self.semantic_conv(semantic_features)
         semantic_features = F.interpolate(semantic_features, coarse_features.size()[2:], mode='bilinear', align_corners=True)
 
