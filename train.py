@@ -24,13 +24,13 @@ if __name__ == '__main__':
     model.train(data=str(yaml_path),
                 cache=False,
                 imgsz=640,
-                epochs=400,
+                epochs=500,
                 batch=4,
-                workers=16,
+                workers=8,
                 device='0',
-                resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/last.pt', # last.pt path
-                #pretrained='/home/shuoxing/XQK/UAV-DETR-main/runs/train/uavvaste_train_continte/weights/best.pt',
+                #resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/last.pt', # last.pt path
+                pretrained='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/best.pt',
                 project='runs/train',
-                name='visdrone_train_SMFF_improve_r18',
+                name='visdrone_train_SMFF_improveFloat_r18',
                 patience = 20 # early stopping patience
                 )
