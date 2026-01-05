@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 import math
+from einops import rearrange
 import numpy as np
 from functools import partial
 from typing import Optional, Callable, Optional, Dict, Union
@@ -411,9 +412,8 @@ class FrequencyFocusedDownSampling(nn.Module):  # Downsample x2分支 with paral
         x2 = self.conv_reduce(x2)
 
         return torch.cat((x1, x2), 1)
-    
-    
-class SemanticAlignmenCalibration(nn.Module):  # 
+
+class SemanticAlignmenCalibration(nn.Module):  #
     def __init__(self, inc):
         super(SemanticAlignmenCalibration, self).__init__()
         hidden_channels = inc[0]
@@ -426,13 +426,13 @@ class SemanticAlignmenCalibration(nn.Module):  #
         self.frequency_enhancer = FFM(hidden_channels)
         # 门控卷积：结合空间和频域特征
         self.gating_conv = nn.Conv2d(hidden_channels, hidden_channels, kernel_size=1, padding=0, bias=True)
-        
+
         # 用于生成偏移量的卷积序列
         self.offset_conv = nn.Sequential(
             Conv(hidden_channels * 2, 64),  # 处理拼接后的特征
             nn.Conv2d(64, self.groups * 4 + 2, kernel_size=3, padding=1, bias=False)  # 生成偏移量
         )
-# 这样初始化权重可以有效地提高模型训练的稳定性，防止梯度爆炸或消失的问题，特别是当网络较深时。
+        # 这样初始化权重可以有效地提高模型训练的稳定性，防止梯度爆炸或消失的问题，特别是当网络较深时。
         self.init_weights()
         self.offset_conv[1].weight.data.zero_()  # 初始化最后一层卷积的权重为零
 
@@ -446,15 +446,16 @@ class SemanticAlignmenCalibration(nn.Module):  #
 
     def forward(self, x):
         coarse_features, semantic_features = x
-        batch_size, _, out_h, out_w = coarse_features.size() #[2,256,80,80]
+        batch_size, _, out_h, out_w = coarse_features.size()  # [2,256,80,80]
 
         # 处理低分辨率的语义特征 (1/8 下采样)[2,256,20,20]
         semantic_features = self.semantic_conv(semantic_features)
-        semantic_features = F.interpolate(semantic_features, coarse_features.size()[2:], mode='bilinear', align_corners=True)
+        semantic_features = F.interpolate(semantic_features, coarse_features.size()[2:], mode='bilinear',
+                                          align_corners=True)
 
         # 频域增强特征
         enhanced_frequency = self.frequency_enhancer(semantic_features)
-        
+
         # 门控机制融合频域和空间域的特征
         gate = torch.sigmoid(self.gating_conv(semantic_features))
         fused_features = semantic_features * (1 - gate) + enhanced_frequency * gate
@@ -471,14 +472,16 @@ class SemanticAlignmenCalibration(nn.Module):  #
 
         # 获取偏移量
         offset_low = conv_results[:, 0:self.groups * 2, :, :].reshape(batch_size * self.groups, -1, out_h, out_w)
-        offset_high = conv_results[:, self.groups * 2:self.groups * 4, :, :].reshape(batch_size * self.groups, -1, out_h, out_w)
+        offset_high = conv_results[:, self.groups * 2:self.groups * 4, :, :].reshape(batch_size * self.groups, -1,
+                                                                                     out_h, out_w)
 
         # 生成归一化网格用于偏移校正
         normalization_factors = torch.tensor([[[[out_w, out_h]]]]).type_as(fused_features).to(fused_features.device)
         grid_w = torch.linspace(-1.0, 1.0, out_h).view(-1, 1).repeat(1, out_w)
         grid_h = torch.linspace(-1.0, 1.0, out_w).repeat(out_h, 1)
         base_grid = torch.cat((grid_h.unsqueeze(2), grid_w.unsqueeze(2)), 2)
-        base_grid = base_grid.repeat(batch_size * self.groups, 1, 1, 1).type_as(fused_features).to(fused_features.device)
+        base_grid = base_grid.repeat(batch_size * self.groups, 1, 1, 1).type_as(fused_features).to(
+            fused_features.device)
 
         # 使用生成的偏移量对网格进行调整
         adjusted_grid_l = base_grid + offset_low.permute(0, 2, 3, 1) / normalization_factors
@@ -494,6 +497,7 @@ class SemanticAlignmenCalibration(nn.Module):  #
 
         # 融合增强后的特征
         attention_weights = 1 + torch.tanh(conv_results[:, self.groups * 4:, :, :])
-        final_features = fused_features * attention_weights[:, 0:1, :, :] + coarse_features * attention_weights[:, 1:2, :, :]
+        final_features = fused_features * attention_weights[:, 0:1, :, :] + coarse_features * attention_weights[:, 1:2,
+                                                                                              :, :]
 
         return final_features
