@@ -165,6 +165,7 @@ class ImprovedFFTKernel(nn.Module):
         pad = ker // 2
         self.in_conv = nn.Sequential(
             nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1),
+            nn.BatchNorm2d(dim),
             nn.GELU()
         )
 
@@ -199,8 +200,12 @@ class ImprovedFFTKernel(nn.Module):
 
         self.conv3 = Conv(dim, dim, 1)
         # 可学习加权参数
-        self.weight_attn = nn.Parameter(torch.tensor([1.0]))
-        self.weight_result = nn.Parameter(torch.tensor([1.0]))
+        # self.weight_attn = nn.Parameter(torch.tensor([1.0]))
+        # self.weight_result = nn.Parameter(torch.tensor([1.0]))
+        self.gate = nn.Sequential(
+            nn.Conv2d(dim, dim, kernel_size=3, padding=1) ,# 卷积层
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         # 1*1 进行通道融合
@@ -218,6 +223,13 @@ class ImprovedFFTKernel(nn.Module):
         #点乘,合并分支
         result = out_strip * out_ttf
 
+        #还原傅里叶变换
+        result = torch.fft.ifft2(result, dim=(-2, -1), norm='backward')
+
+        result = torch.abs(result)
+
+        # 结束
+        result = self.act(self.conv1x1(result))
         #合并之后
         # 1X1+3X3+5X5
         # x_sca1 = self.conv1x1(x)
@@ -238,20 +250,13 @@ class ImprovedFFTKernel(nn.Module):
         attn = self.conv3(attn)
 
         # 1. 加权融合（可能产生大值）
-        weights = F.softmax(torch.stack([self.weight_attn, self.weight_result]), dim=0)
-        result_last = weights[0] * attn + weights[1] * result
+        gate_1 = self.gate(attn)
+        gate_2 = self.gate(result)
 
-
-        result = torch.fft.ifft2(result_last, dim=(-2, -1), norm='backward')
-
-
-
-        result = torch.abs(result)
+        result_last = gate_1 * attn + gate_2 * result
 
 
 
-        #结束
-        out = self.act(self.conv1x1(result))
 
 
         # #改良
@@ -296,7 +301,7 @@ class ImprovedFFTKernel(nn.Module):
         # # 最终融合 公式4
         # out = self.dw_33(out) + self.dw_11(out) + x_sca
         # out = self.act(out)
-        return self.out_conv(out)
+        return self.out_conv(result_last)
 
 class Conv(nn.Module):
     """Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
