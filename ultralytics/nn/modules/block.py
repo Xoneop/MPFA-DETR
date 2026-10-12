@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 
+from sympy import fourier_transform
+
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv
 from .transformer import TransformerBlock
 
@@ -13,6 +15,78 @@ __all__ = ('DFL', 'HGBlock', 'HGStem', 'SPP', 'SPPF', 'C1', 'C2', 'C3', 'C2f', '
            'GhostBottleneck', 'Bottleneck', 'BottleneckCSP', 'Proto', 'RepC3', 'ConvNormLayer', 'BasicBlock', 'WTConvNormLayer',
            'BottleNeck', 'Blocks')
 
+class FourierFeatureEnhance(nn.Module):
+    """
+    傅里叶特征增强模块（可嵌入任意网络模块后）
+    对特征图的每个通道独立做频域增强：保留低频轮廓 + 增强有用高频细节 + 过滤噪声高频
+    """
+
+    def __init__(self,
+                 low_ratio=0.05,  # 保留低频的比例（相对于特征图尺寸，0.05~0.15为宜）
+                 high_ratio=0.3,  # 保留高频的比例（0.2~0.4为宜）
+                 enhance_gain=1.2,  # 高频增强增益（1.0~2.0为宜）
+                 eps=1e-8):  # 防止除零
+        super(FourierFeatureEnhance, self).__init__()
+        self.low_ratio = low_ratio
+        self.high_ratio = high_ratio
+        self.enhance_gain = enhance_gain
+        self.eps = eps
+
+    def forward(self, x):
+        """
+        :param x: 输入特征图，shape=[B, C, H, W]
+        :return: 增强后的特征图，shape=[B, C, H, W]
+        """
+        B, C, H, W = x.shape
+
+        # 1. 对特征图做二维傅里叶变换（复数形式）
+        # 先调整维度：[B, C, H, W] → [B*C, H, W]，便于逐通道处理
+        x_reshaped = x.reshape(-1, H, W)
+        # 傅里叶变换（返回复数张量，实部+虚部）
+        fft_x = torch.fft.fft2(x_reshaped, dim=(-2, -1))
+        # 低频移到中心
+        fft_shift = torch.fft.fftshift(fft_x, dim=(-2, -1))
+
+        # 2. 构建带通滤波掩码（逐通道复用）
+        # 计算中心坐标
+        cy, cx = H // 2, W // 2
+        # 计算低频/高频半径（基于特征图尺寸的比例，适配不同大小的特征图）
+        low_r = int(min(H, W) * self.low_ratio)
+        high_r = int(min(H, W) * self.high_ratio)
+
+        # 生成网格坐标（H, W）
+        y = torch.arange(H, device=x.device).unsqueeze(1).repeat(1, W)
+        x_coord = torch.arange(W, device=x.device).unsqueeze(0).repeat(H, 1)
+        # 计算每个位置到中心的距离
+        dist = torch.sqrt((x_coord - cx) ** 2 + (y - cy) ** 2)
+
+        # 构建掩码：低频保留(1) + 中频增强(enhance_gain) + 高频过滤(0)
+        mask = torch.zeros_like(dist, dtype=x.dtype, device=x.device)
+        mask[dist <= low_r] = 1.0  # 低频区域
+        mask[(dist > low_r) & (dist <= high_r)] = self.enhance_gain  # 有用高频区域
+        mask[dist > high_r] = 0.0  # 噪声高频区域
+        # 扩展维度适配：[H, W] → [B*C, H, W]
+        mask = mask.unsqueeze(0).repeat(B * C, 1, 1)
+
+        # 3. 频域滤波：傅里叶结果 × 掩码（复数乘法）
+        fft_filtered = fft_shift * mask
+
+        # 4. 逆傅里叶变换：频域→空域
+        # 低频移回原位
+        ifft_shift = torch.fft.ifftshift(fft_filtered, dim=(-2, -1))
+        # 逆傅里叶变换（返回复数）
+        ifft_x = torch.fft.ifft2(ifft_shift, dim=(-2, -1))
+        # 取实部（虚部是数值误差，可忽略）
+        x_enhanced = torch.real(ifft_x)
+
+        # 5. 恢复原始维度 + 数值稳定化
+        x_enhanced = x_enhanced.reshape(B, C, H, W)
+        # 归一化（匹配输入特征图的数值范围，避免梯度爆炸）
+        x_enhanced = (x_enhanced - x_enhanced.min()) / (x_enhanced.max() - x_enhanced.min() + self.eps)
+        # 还原到输入的数值范围
+        x_enhanced = x_enhanced * (x.max() - x.min()) + x.min()
+
+        return x_enhanced
 
 class DFL(nn.Module):
     """
@@ -148,7 +222,8 @@ class SPPF(nn.Module):
         x = self.cv1(x)
         y1 = self.m(x)
         y2 = self.m(y1)
-        return self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
+        a = self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
+        return a
 
 
 class C1(nn.Module):
@@ -203,7 +278,8 @@ class C2f(nn.Module):
         """Forward pass through C2f layer."""
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        a = self.cv2(torch.cat(y, 1))
+        return a
 
     def forward_split(self, x):
         """Forward pass using split() instead of chunk()."""
@@ -250,6 +326,14 @@ class RepC3(nn.Module):
         self.cv2 = Conv(c1, c_, 1, 1)
         self.m = nn.Sequential(*[RepConv(c_, c_) for _ in range(n)])
         self.cv3 = Conv(c_, c2, 1, 1) if c_ != c2 else nn.Identity()
+        # # 傅里叶特征增强模块（可根据需求开关）
+        # self.fourier_enhance = FourierFeatureEnhance(
+        #     low_ratio=0.08,
+        #     high_ratio=0.3,
+        #     enhance_gain=1.5
+        # )
+        # self.hori_pool = nn.AdaptiveAvgPool2d(output_size=(1, None))  # 水平池化：H→1，W保留
+        # self.vert_pool = nn.AdaptiveAvgPool2d(output_size=(None, 1))  # 纵向池化：W→1，H保留
 
     def forward(self, x):
         """Forward pass of RT-DETR neck layer."""
@@ -409,12 +493,12 @@ class BasicBlock(nn.Module):
 
         self.branch2a = ConvNormLayer(ch_in, ch_out, 3, stride, act=act)
         self.branch2b = ConvNormLayer(ch_out, ch_out, 3, 1, act=None)
-        self.act = nn.Identity() if act is None else get_activation(act) 
-
+        self.act = nn.Identity() if act is None else get_activation(act)
 
     def forward(self, x):
         out = self.branch2a(x)
         out = self.branch2b(out)
+
         if self.shortcut:
             short = x
         else:

@@ -17,10 +17,10 @@ if __name__ == '__main__':
     # 获取当前脚本所在的目录
     current_dir = Path(__file__).parent
     # 构建相对路径
-    yaml_path = '/home/shuoxing/XQK/UAV-DETR-main/dataset/dataset_visdrone/data.yaml'
+    yaml_path = '/root/autodl-tmp/UAV-DETR-main-15/dataset/dataset_visdrone/data.yaml'
     check_path(yaml_path)
     # model = RTDETR('ultralytics/cfg/models/uavdetr-r50.yaml')
-    model = RTDETR('/home/shuoxing/XQK/UAV-DETR-main/ultralytics/cfg/models/uavdetr-r18.yaml')
+    model = RTDETR('/root/autodl-tmp/UAV-DETR-main-32/ultralytics/cfg/models/uavdetr-r18.yaml')
     model.train(data=str(yaml_path),
                 cache=False,
                 imgsz=640,
@@ -28,9 +28,9 @@ if __name__ == '__main__':
                 batch=4,
                 workers=8,
                 device='0',
-                #resume='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/last.pt', # last.pt path
-                pretrained='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/best.pt',
+                resume='/home/shuoxing/XQK/UAV-DETR-main-32/runs/train/visdrone_train_SMFF_AK_r188/weights/last.pt', # last.pt path
+                #pretrained='/home/shuoxing/XQK/UAV-DETR-main/runs/train/visdrone_train_SMFF_improve_r18/weights/best.pt',
                 project='runs/train',
-                name='visdrone_train_SMFF_improveFloat_r18',
+                name='visdrone_train_SMFF_AK_r188',
                 patience = 20 # early stopping patience
                 )

@@ -6,7 +6,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-
+import math
 __all__ = ('Conv', 'Conv2', 'LightConv', 'DWConv', 'DSConv', 'DWConvTranspose2d', 'ConvTranspose', 'Focus', 'GhostConv',
            'ChannelAttention', 'SpatialAttention', 'CBAM', 'Concat', 'RepConv')
 
@@ -189,6 +189,7 @@ class RepConv(nn.Module):
         self.conv1 = Conv(c1, c2, k, s, p=p, g=g, act=False)
         self.conv2 = Conv(c1, c2, 1, s, p=(p - k // 2), g=g, act=False)
 
+
     def forward_fuse(self, x):
         """Forward process."""
         return self.act(self.conv(x))
@@ -323,3 +324,5 @@ class Concat(nn.Module):
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
         return torch.cat(x, self.d)
+
+

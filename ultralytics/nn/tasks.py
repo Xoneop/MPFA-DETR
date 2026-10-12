@@ -29,13 +29,14 @@ from ultralytics.utils.torch_utils import (
     scale_img,
     time_sync,
 )
-from ultralytics.nn.uav_modules.EfficientFormerV2 import *
+from .uav_modules.EfficientFormerV2 import *
+from .uav_modules.block import *
+
 try:
     import thop
 except ImportError:
     thop = None
 
-from ultralytics.nn.uav_modules import *
 
 
 
@@ -701,7 +702,6 @@ def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
     # Return model and ckpt
     return model, ckpt
 
-
 def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, input_channels(3)
     """Parse a YOLO model.yaml dictionary into a PyTorch model."""
     import ast
@@ -774,6 +774,7 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
             RepC3,
             SPDConv,
             ConvNormLayer,
+            XSSBlock,
         }:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
@@ -790,11 +791,15 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
                 C3Ghost,
                 C3x,
                 RepC3,
+                XSSBlock,
             }:
                 args.insert(2, n)  # number of repeats
                 n = 1
         elif m is AIFI:
             args = [ch[f], *args]
+        elif m is AdaptiveWaveletFeatureExtractor:
+            c1, c2 = ch[f], args[0]
+            args = [c1, c2]
         elif m is SemanticAlignmenCalibration:
             c1 = [ch[x] for x in f]
             c2 = c1[0]
@@ -816,7 +821,11 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
-
+        elif m is Add:
+            c =[ch[x] for x in f]
+            c1=c[0]
+            c2=c[1]
+            args=[c]
         elif m is Blocks:
             block_type = globals()[args[1]]
             c1, c2 = ch[f], args[0] * block_type.expansion

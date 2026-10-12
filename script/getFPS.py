@@ -2,6 +2,20 @@
 Script sourced from the internet.
 
 """
+# ===================== 永久修复 XSSBlock 报错 =====================
+import sys
+import os
+import torch
+
+# 自动获取项目根目录
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)  # 优先使用项目内修改版 Ultralytics
+
+# 从你项目真实路径导入自定义模块（这是唯一正确的导入方式）
+from ultralytics.nn.uav_modules.block import XSSBlock
+
+# ================================================================
+
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -38,15 +52,18 @@ def get_weight_size(path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='/home/shuoxing/XQK/UAV-DETR-main/runs/train/exp/weights/best.pt', help='trained weights path')
+    parser.add_argument('--weights', type=str, default='/root/autodl-tmp/UAV-DETR-main-34/best.pt', help='trained weights path')
     parser.add_argument('--batch', type=int, default=4, help='total batch size for all GPUs')
     parser.add_argument('--imgs', nargs='+', type=int, default=[640, 640], help='[height, width] image sizes')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--warmup', default=200, type=int, help='warmup time')
     parser.add_argument('--testtime', default=1000, type=int, help='test time')
     opt = parser.parse_args()
-    
+  
     device = select_device(opt.device, batch=opt.batch)
+    print(f"Device: {device}")
+   
+
     
     # Model
     weights = opt.weights
