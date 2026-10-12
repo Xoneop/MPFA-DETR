@@ -32,7 +32,7 @@ head:
   - [-1, 1, DySample,  [2]] # 16                               128 [s5->AIFI->conv->DySample + s4->conv]->RepC3(3)[Fusion]->conv->DySample
   - [4, 1, Focus, [128,1]] # 17                                      128 s2->Focus(聚焦通道信息)
   - [[-1, -2, 5], 1, Concat, [1]] # 18                               768 [s2->Focus(聚焦通道信息) + [s5->AIFI->conv->DySample + s4->conv]->RepC3(3)[Fusion]->conv->DySample + s3]
-  - [-1, 1, MFFF, []] # 19                                           768 [s2->Focus(聚焦通道信息) + [s5->AIFI->conv->DySample + s4->conv]->RepC3(3)[Fusion]->conv->DySample + s3] -> MFFF
+  - [-1, 1, FMPFM, []] # 19                                           768 [s2->Focus(聚焦通道信息) + [s5->AIFI->conv->DySample + s4->conv]->RepC3(3)[Fusion]->conv->DySample + s3] -> FMPFM
   - [-1, 3, RepC3, [256]] # 20                                       256
 
   - [-1, 1, FrequencyFocusedDownSampling, [256]]   # 21              256

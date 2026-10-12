@@ -12,11 +12,11 @@ from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
 
-# ===================== 永久修复 XSSBlock 报错 =====================
+# ===================== 永久修复 CCSM 报错 =====================
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
-from ultralytics.nn.uav_modules.block import XSSBlock  # noqa: F401
+from ultralytics.nn.uav_modules.block import CCSM  # noqa: F401
 # ================================================================
 
 from ultralytics import RTDETR

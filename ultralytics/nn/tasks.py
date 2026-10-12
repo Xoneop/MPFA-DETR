@@ -774,7 +774,7 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
             RepC3,
             SPDConv,
             ConvNormLayer,
-            XSSBlock,
+            CCSM,
         }:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
@@ -791,13 +791,13 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
                 C3Ghost,
                 C3x,
                 RepC3,
-                XSSBlock,
+                CCSM,
             }:
                 args.insert(2, n)  # number of repeats
                 n = 1
         elif m is AIFI:
             args = [ch[f], *args]
-        elif m is AdaptiveWaveletFeatureExtractor:
+        elif m is HLFASM:
             c1, c2 = ch[f], args[0]
             args = [c1, c2]
         elif m is SemanticAlignmenCalibration:
@@ -810,7 +810,7 @@ def parse_model(d, ch, verbose=True, warehouse_manager=None):  # model_dict, inp
             if m is HGBlock:
                 args.insert(4, n)  # number of repeats
                 n = 1
-        elif m in {MFFF}:
+        elif m in {FMPFM}:
             c2 = ch[f]
             args = [c2]
         elif m in { DySample

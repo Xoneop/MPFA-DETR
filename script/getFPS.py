@@ -2,7 +2,7 @@
 Script sourced from the internet.
 
 """
-# ===================== 永久修复 XSSBlock 报错 =====================
+# ===================== 永久修复 CCSM 报错 =====================
 import sys
 import os
 import torch
@@ -12,7 +12,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)  # 优先使用项目内修改版 Ultralytics
 
 # 从你项目真实路径导入自定义模块（这是唯一正确的导入方式）
-from ultralytics.nn.uav_modules.block import XSSBlock
+from ultralytics.nn.uav_modules.block import CCSM
 
 # ================================================================
 
